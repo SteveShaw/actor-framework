@@ -103,7 +103,7 @@ public:
   template <class Worker>
   struct worker_data {
     using neighbors_t = std::vector<Worker*>;
-    using worker_matrix_t = std::vector<neighbors_t>;
+    using worker_proximity_matrix_t = std::vector<neighbors_t>;
 
     explicit worker_data(scheduler::abstract_coordinator* p)
         : rengine(std::random_device{}())
@@ -113,7 +113,7 @@ public:
       // nop
     }
 
-    worker_matrix_t init_worker_matrix(Worker* self,
+    worker_proximity_matrix_t init_worker_proximity_matrix(Worker* self,
                                        const pu_set_t& current_pu_id_set) {
       auto& cdata = d(self->parent());
       auto& topo = cdata.topo;
@@ -124,7 +124,7 @@ public:
                         "Current NUMA node_set is unknown");
       auto current_node_id = hwloc_bitmap_first(current_node_set.get());
       std::map<float, pu_set_t> dist_map;
-      worker_matrix_t result_matrix;
+      worker_proximity_matrix_t result_matrix;
       // Distance matrix of NUMA nodes.
       // It is possible to request the distance matrix on PU level,
       // which would be a better match for our usecase
@@ -205,7 +205,7 @@ public:
     // This queue is exposed to other workers that may attempt to steal jobs
     // from it and the central scheduling unit can push new jobs to the queue.
     queue_type queue;
-    worker_matrix_t worker_matrix;
+    worker_proximity_matrix_t wp_matrix;
     std::default_random_engine rengine;
     std::uniform_int_distribution<size_t> uniform;
     std::vector<poll_strategy> strategies;
@@ -254,14 +254,14 @@ public:
     auto res = hwloc_set_cpubind(cdata.topo.get(), pu_set.get(),
                           HWLOC_CPUBIND_THREAD | HWLOC_CPUBIND_NOMEMBIND);
     CALL_CAF_CRITICAL(res == -1, "hwloc_set_cpubind() failed");
-    wdata.worker_matrix = wdata.init_worker_matrix(self, pu_set);
+    wdata.wp_matrix = wdata.init_worker_proximity_matrix(self, pu_set);
 
-    auto wm_max_idx = wdata.worker_matrix.size() - 1;
+    auto wm_max_idx = wdata.wp_matrix.size() - 1;
     if (wdata.neighborhood_level == 0) {
       self->set_all_workers_are_neighbors(true); 
     } else if (wdata.neighborhood_level <= wm_max_idx) {
       self->set_neighbors(
-        wdata.worker_matrix[wm_max_idx - wdata.neighborhood_level]);
+        wdata.wp_matrix[wm_max_idx - wdata.neighborhood_level]);
         self->set_all_workers_are_neighbors(false);
     } else { //neighborhood_level > wm_max_idx
         self->set_all_workers_are_neighbors(false);
@@ -279,7 +279,7 @@ public:
       // you can't steal from yourself, can you?
       return nullptr;
     }
-    auto& wmatrix = wdata.worker_matrix;
+    auto& wmatrix = wdata.wp_matrix;
     auto& scheduler_lvl = wmatrix[scheduler_lvl_idx];
     auto res =
       scheduler_lvl[wdata.uniform(wdata.rengine) % scheduler_lvl.size()]
